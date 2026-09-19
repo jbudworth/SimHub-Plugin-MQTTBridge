@@ -12,7 +12,7 @@ using SimHub.Plugin.MQTTBridge.UI;
 namespace SimHub.Plugin.MQTTBridge
 {
     [PluginDescription("Publishes SimHub properties to MQTT and exposes subscribed MQTT topics as SimHub properties.")]
-    [PluginAuthor("James Budworth")]
+    [PluginAuthor("Claude.ai")]
     [PluginName("MQTT Bridge")]
     public class MqttBridgePlugin : IPlugin, IDataPlugin, IWPFSettingsV2
     {
