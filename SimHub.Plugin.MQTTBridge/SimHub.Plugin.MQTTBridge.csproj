@@ -1,0 +1,93 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>SimHub.Plugin.MQTTBridge</AssemblyName>
+    <RootNamespace>SimHub.Plugin.MQTTBridge</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <Platforms>AnyCPU;x64;x86</Platforms>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <Version>0.9.0</Version>
+    <Product>SimHub MQTT Bridge</Product>
+    <Description>Publishes SimHub properties to MQTT and exposes subscribed MQTT topics as SimHub properties.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MQTTnet" Version="4.3.7.1207" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- For System.Security.Cryptography.ProtectedData (DPAPI), used to encrypt the
+         broker password at rest instead of storing it in plaintext in settings.json. -->
+    <Reference Include="System.Security" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      These two DLLs ship inside your SimHub installation folder.
+      Update the HintPath values below to match where SimHub is installed
+      on YOUR machine (default shown here). They are marked Private=false
+      so they are NOT copied into the output folder — SimHub already has
+      them loaded, and shipping a second copy is the single most common
+      cause of "plugin failed to load" errors from version mismatches.
+
+      Default SimHub install path: C:\Program Files (x86)\SimHub
+    -->
+    <Reference Include="SimHub.Plugins">
+      <HintPath>C:\Program Files (x86)\SimHub\SimHub.Plugins.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="GameReaderCommon">
+      <HintPath>C:\Program Files (x86)\SimHub\GameReaderCommon.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <!--
+      SimHub's own logging plumbing. SimHub.Logging.dll exposes the static
+      SimHub.Logging.Current log4net.ILog instance that every first-party
+      plugin logs through, so anything this plugin logs lands in the same
+      SimHub log file/viewer as SimHub's own messages. It in turn depends on
+      log4net.dll, so both are referenced, both Private=false for the same
+      reason as the two references above: SimHub already has them loaded, and
+      shipping a second copy risks a version mismatch.
+    -->
+    <Reference Include="SimHub.Logging">
+      <HintPath>C:\Program Files (x86)\SimHub\SimHub.Logging.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="log4net">
+      <HintPath>C:\Program Files (x86)\SimHub\log4net.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!--
+    Drop the built DLL straight into SimHub's install folder after every build, so a fresh
+    build is picked up next time SimHub starts (or immediately with F5 debugging, see below).
+    To DISABLE this: delete this whole <Target> block, or comment it out.
+    To CHANGE the destination: edit the DestinationFolder path.
+
+    This copies the plugin DLL itself PLUS MQTTnet.dll — SimHub loads plugins into its own
+    process, so any dependency the plugin needs (like MQTTnet) has to live in SimHub's folder
+    too, or you get a "Could not load file or assembly 'MQTTnet...'" error at connect time.
+
+    Newtonsoft.Json.dll is deliberately NOT copied here. SimHub almost certainly already ships
+    its own copy in that folder, and overwriting it with a different version is a good way to
+    break other plugins that depend on it. If SimHub's folder does NOT already contain
+    Newtonsoft.Json.dll, copy the one from this project's build output there once, manually.
+  -->
+  <ItemGroup>
+    <SimHubDeployFiles Include="$(TargetDir)SimHub.Plugin.MQTTBridge.dll" />
+    <SimHubDeployFiles Include="$(TargetDir)MQTTnet.dll" />
+  </ItemGroup>
+
+  <Target Name="CopyToSimHub" AfterTargets="Build">
+    <Copy SourceFiles="@(SimHubDeployFiles)"
+          DestinationFolder="C:\Program Files (x86)\SimHub\"
+          SkipUnchangedFiles="true"
+          ContinueOnError="true" />
+  </Target>
+
+</Project>

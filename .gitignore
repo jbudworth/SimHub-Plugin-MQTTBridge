@@ -1,0 +1,12 @@
+# Build artifacts
+[Bb]in/
+[Oo]bj/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
