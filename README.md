@@ -24,12 +24,12 @@ SimHub.Plugin.MQTTBridge/
 
 ## Prerequisites
 
-- Visual Studio 2022 (or `dotnet` SDK 6+/8+ command line — the project itself still
+- Visual Studio 2022 (or `dotnet` SDK 6+/8+ command line - the project itself still
   targets `net48` because that's what SimHub's plugin host loads, but modern SDKs
   can build net48 class libraries fine as long as the .NET Framework 4.8 targeting
   pack is installed).
 - A working SimHub installation (this is where `SimHub.Plugins.dll`,
-  `GameReaderCommon.dll`, `SimHub.Logging.dll`, and `log4net.dll` come from —
+  `GameReaderCommon.dll`, `SimHub.Logging.dll`, and `log4net.dll` come from -
   they are **not** included in this project and must not be redistributed).
 
 ## Build steps
@@ -56,12 +56,12 @@ SimHub.Plugin.MQTTBridge/
    ```
 3. Build in `Release`. NuGet will pull down `MQTTnet` and `Newtonsoft.Json` automatically
    (this container's network policy blocks nuget.org, so these packages could not be
-   restored or the build test-compiled here — do this step on a machine with normal
+   restored or the build test-compiled here - do this step on a machine with normal
    internet access).
 4. After a successful build, `bin\Release\net48\` will contain:
    - `SimHub.Plugin.MQTTBridge.dll` (the plugin itself)
    - `MQTTnet.dll`
-   - `Newtonsoft.Json.dll` (skip this one if SimHub already ships a compatible version —
+   - `Newtonsoft.Json.dll` (skip this one if SimHub already ships a compatible version -
      check the SimHub install folder first; if a `Newtonsoft.Json.dll` is already there,
      don't overwrite it with a different version, that's a real way to break other plugins)
 
@@ -87,14 +87,14 @@ editor property picker, or any existing dash/overlay that already displays the v
 Each row has:
 - **QoS** (0/1/2)
 - **Retain**
-- **Min interval (ms)** — throttle for chatty properties like speed or RPM
-- **Only on change** — skip publishing if the value hasn't moved
+- **Min interval (ms)** - throttle for chatty properties like speed or RPM
+- **Only on change** - skip publishing if the value hasn't moved
 
 ### Subscribe (MQTT -> SimHub)
 
 Add a row, enter the topic to subscribe to, a property name, and the expected data
 type (String / Double / Integer / Boolean). The value becomes available in SimHub as
-`<prefix>.<PropertyName>` — by default `MqttBridge.<PropertyName>` — as soon as a
+`<prefix>.<PropertyName>` - by default `MqttBridge.<PropertyName>` - as soon as a
 message arrives on that topic. Click **Apply subscriptions** after editing this list
 without reconnecting.
 
@@ -111,7 +111,7 @@ came in most recently), rather than fanning out into separate properties per top
 - **Separate property namespace.** All properties this plugin exposes live under a
   configurable prefix (default `MqttBridge.*`). As long as you don't rename that
   prefix to collide with names the other plugin already uses, there's no property
-  clash — SimHub properties are just a shared dictionary keyed by name, and two
+  clash - SimHub properties are just a shared dictionary keyed by name, and two
   different names never collide.
 - **Separate settings storage and separate DLL.** This plugin persists its settings
   under its own key (`MqttBridgeSettings`) and ships as its own assembly
