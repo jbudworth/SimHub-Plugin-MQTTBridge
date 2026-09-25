@@ -8,7 +8,7 @@
     <LangVersion>latest</LangVersion>
     <Platforms>AnyCPU;x64;x86</Platforms>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
-    <Version>0.9.0</Version>
+    <Version>0.9.1</Version>
     <Product>SimHub MQTT Bridge</Product>
     <Description>Publishes SimHub properties to MQTT and exposes subscribed MQTT topics as SimHub properties.</Description>
   </PropertyGroup>

@@ -36,8 +36,20 @@ namespace SimHub.Plugin.MQTTBridge
         private bool _disposed;
         private bool _wantConnected;
 
+        // Serializes client creation/disposal and connect attempts, so a pending
+        // auto-reconnect timer callback can never race a manual Connect click into
+        // a concurrent ConnectAsync on the same client, or use a client that is
+        // being disposed and swapped out.
+        private readonly SemaphoreSlim _connectLock = new SemaphoreSlim(1, 1);
+
         public event EventHandler<MqttMessageReceivedEventArgs> MessageReceived;
         public event Action<string> StatusChanged;
+
+        /// <summary>Raised every time a broker connection is established, including
+        /// automatic reconnects. Subscriptions must be re-applied on each firing:
+        /// the client connects with a clean session, so the broker forgets them
+        /// whenever the connection drops.</summary>
+        public event Action Connected;
 
         public bool IsConnected => _client?.IsConnected == true;
 
@@ -46,24 +58,40 @@ namespace SimHub.Plugin.MQTTBridge
             _settings = settings;
             _wantConnected = true;
 
-            if (_client != null)
+            await _connectLock.WaitAsync().ConfigureAwait(false);
+            try
             {
-                // Reconnecting (e.g. after editing broker settings): drop the old client's
-                // handlers and dispose it instead of leaking it when _client is reassigned below.
-                _client.ApplicationMessageReceivedAsync -= OnApplicationMessageReceivedAsync;
-                _client.DisconnectedAsync -= OnDisconnectedAsync;
-                _client.ConnectedAsync -= OnConnectedAsync;
-                _client.Dispose();
+                if (_client != null)
+                {
+                    // Reconnecting (e.g. after editing broker settings): drop the old client's
+                    // handlers and dispose it instead of leaking it when _client is reassigned below.
+                    _client.ApplicationMessageReceivedAsync -= OnApplicationMessageReceivedAsync;
+                    _client.DisconnectedAsync -= OnDisconnectedAsync;
+                    _client.ConnectedAsync -= OnConnectedAsync;
+                    _client.Dispose();
+                }
+
+                var factory = new MqttFactory();
+                _client = factory.CreateMqttClient();
+
+                _client.ApplicationMessageReceivedAsync += OnApplicationMessageReceivedAsync;
+                _client.DisconnectedAsync += OnDisconnectedAsync;
+                _client.ConnectedAsync += OnConnectedAsync;
+            }
+            finally
+            {
+                _connectLock.Release();
             }
 
-            var factory = new MqttFactory();
-            _client = factory.CreateMqttClient();
+            await DoConnectAsync().ConfigureAwait(false);
+        }
 
-            _client.ApplicationMessageReceivedAsync += OnApplicationMessageReceivedAsync;
-            _client.DisconnectedAsync += OnDisconnectedAsync;
-            _client.ConnectedAsync += OnConnectedAsync;
-
-            await DoConnectAsync();
+        /// <summary>True if <paramref name="topic"/> matches <paramref name="filter"/> under MQTT
+        /// matching rules, including # and + wildcards (a filter without wildcards is an exact match).</summary>
+        public static bool TopicMatchesFilter(string topic, string filter)
+        {
+            if (string.IsNullOrEmpty(topic) || string.IsNullOrEmpty(filter)) return false;
+            return MqttTopicFilterComparer.Compare(topic, filter) == MqttTopicFilterCompareResult.IsMatch;
         }
 
         private MqttClientOptions BuildOptions()
@@ -89,11 +117,16 @@ namespace SimHub.Plugin.MQTTBridge
 
         private async Task DoConnectAsync()
         {
+            await _connectLock.WaitAsync().ConfigureAwait(false);
             try
             {
+                // A concurrent attempt (manual Connect vs. reconnect timer) may have
+                // already finished, or the service may have been torn down meanwhile.
+                if (_disposed || !_wantConnected || IsConnected) return;
+
                 StatusChanged?.Invoke("Connecting...");
                 var options = BuildOptions();
-                await _client.ConnectAsync(options, CancellationToken.None);
+                await _client.ConnectAsync(options, CancellationToken.None).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -101,12 +134,17 @@ namespace SimHub.Plugin.MQTTBridge
                 StatusChanged?.Invoke($"Connect failed: {ex.Message}");
                 ScheduleReconnect();
             }
+            finally
+            {
+                _connectLock.Release();
+            }
         }
 
         private Task OnConnectedAsync(MqttClientConnectedEventArgs args)
         {
             Log.Info("MQTT Bridge: broker connection established.");
             StatusChanged?.Invoke("Connected");
+            Connected?.Invoke();
             return Task.CompletedTask;
         }
 
@@ -131,12 +169,16 @@ namespace SimHub.Plugin.MQTTBridge
 
         private void ScheduleReconnect()
         {
+            // An in-flight disconnect callback can land here after Dispose/DisconnectAsync;
+            // don't recreate a timer that nothing would ever clean up again.
+            if (_disposed || !_wantConnected) return;
+
             _reconnectTimer?.Dispose();
             _reconnectTimer = new Timer(async _ =>
             {
                 if (_wantConnected && !IsConnected)
                 {
-                    await DoConnectAsync();
+                    await DoConnectAsync().ConfigureAwait(false);
                 }
             }, null, TimeSpan.FromSeconds(5), Timeout.InfiniteTimeSpan);
         }
@@ -173,7 +215,7 @@ namespace SimHub.Plugin.MQTTBridge
                     .WithQualityOfServiceLevel((MqttQualityOfServiceLevel)qos)
                     .Build();
 
-                await _client.SubscribeAsync(new MqttClientSubscribeOptionsBuilder().WithTopicFilter(filter).Build());
+                await _client.SubscribeAsync(new MqttClientSubscribeOptionsBuilder().WithTopicFilter(filter).Build()).ConfigureAwait(false);
                 Log.Info($"MQTT Bridge: subscribed to '{topic}' (QoS {qos}).");
             }
             catch (Exception ex)
@@ -189,7 +231,7 @@ namespace SimHub.Plugin.MQTTBridge
 
             try
             {
-                await _client.UnsubscribeAsync(new MqttClientUnsubscribeOptionsBuilder().WithTopicFilter(topic).Build());
+                await _client.UnsubscribeAsync(new MqttClientUnsubscribeOptionsBuilder().WithTopicFilter(topic).Build()).ConfigureAwait(false);
             }
             catch
             {
@@ -210,7 +252,7 @@ namespace SimHub.Plugin.MQTTBridge
                     .WithRetainFlag(retain)
                     .Build();
 
-                await _client.PublishAsync(message, CancellationToken.None);
+                await _client.PublishAsync(message, CancellationToken.None).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -229,7 +271,9 @@ namespace SimHub.Plugin.MQTTBridge
             {
                 try
                 {
-                    await _client.DisconnectAsync();
+                    // ConfigureAwait(false) also lets End() block on this from the UI
+                    // thread at shutdown without deadlocking on the WPF context.
+                    await _client.DisconnectAsync().ConfigureAwait(false);
                 }
                 catch
                 {

@@ -69,6 +69,7 @@ namespace SimHub.Plugin.MQTTBridge
             MqttService = new MqttService();
             MqttService.MessageReceived += OnMqttMessageReceived;
             MqttService.StatusChanged += OnMqttStatusChanged;
+            MqttService.Connected += OnMqttConnected;
 
             Log.Info($"MQTT Bridge: Init complete. {Settings.PublishMappings.Count} publish mapping(s), {Settings.SubscribeMappings.Count} subscribe mapping(s) loaded.");
 
@@ -85,17 +86,8 @@ namespace SimHub.Plugin.MQTTBridge
                 Log.Info($"MQTT Bridge: connecting to {Settings.Host}:{Settings.Port} as client '{Settings.ClientId}'.");
                 await MqttService.DisconnectAsync();
                 await MqttService.ConnectAsync(Settings);
-
-                List<SubscribeMapping> subsToSubscribe;
-                lock (_mappingsLock)
-                {
-                    subsToSubscribe = Settings.SubscribeMappings.Where(s => s.Enabled && !string.IsNullOrWhiteSpace(s.Topic)).ToList();
-                }
-
-                foreach (var sub in subsToSubscribe)
-                {
-                    await MqttService.SubscribeAsync(sub.Topic, sub.Qos);
-                }
+                // Subscriptions are applied by OnMqttConnected (via the Connected event),
+                // which also covers automatic reconnects.
             }
             catch (Exception ex)
             {
@@ -205,6 +197,33 @@ namespace SimHub.Plugin.MQTTBridge
             }
         }
 
+        /// <summary>
+        /// Runs on every established broker connection, including automatic reconnects.
+        /// The client uses clean sessions, so the broker forgets all subscriptions on
+        /// disconnect; re-applying them here is what keeps subscribe mappings alive
+        /// across network blips without a manual reconnect.
+        /// </summary>
+        private async void OnMqttConnected()
+        {
+            try
+            {
+                List<SubscribeMapping> subs;
+                lock (_mappingsLock)
+                {
+                    subs = Settings.SubscribeMappings.Where(s => s.Enabled && !string.IsNullOrWhiteSpace(s.Topic)).ToList();
+                }
+
+                foreach (var sub in subs)
+                {
+                    await MqttService.SubscribeAsync(sub.Topic, sub.Qos);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error("MQTT Bridge: error re-applying subscriptions after connect.", ex);
+            }
+        }
+
         private void OnMqttStatusChanged(string status)
         {
             ConnectionStatus = status;
@@ -276,7 +295,10 @@ namespace SimHub.Plugin.MQTTBridge
             List<SubscribeMapping> matches;
             lock (_mappingsLock)
             {
-                matches = Settings.SubscribeMappings.Where(s => s.Enabled && s.Topic == e.Topic).ToList();
+                // Filter-aware matching: a row's Topic may contain # or + wildcards, and
+                // incoming messages arrive on concrete topics, so exact equality would
+                // never match wildcard rows.
+                matches = Settings.SubscribeMappings.Where(s => s.Enabled && MqttService.TopicMatchesFilter(e.Topic, s.Topic)).ToList();
             }
 
             foreach (var sub in matches)
@@ -380,7 +402,20 @@ namespace SimHub.Plugin.MQTTBridge
             Log.Info("MQTT Bridge: End - saving settings and shutting down.");
             Settings.ProtectPassword();
             this.SaveCommonSettings(SettingsKey, Settings);
-            DisconnectAsync();
+
+            try
+            {
+                // Wait (bounded) for the graceful MQTT DISCONNECT to actually go out
+                // before disposing the client; fire-and-forget here meant the broker
+                // usually saw an ungraceful TCP drop on every shutdown. Safe to block:
+                // MqttService awaits with ConfigureAwait(false) throughout.
+                MqttService?.DisconnectAsync().Wait(TimeSpan.FromSeconds(3));
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("MQTT Bridge: error during shutdown disconnect.", ex);
+            }
+
             MqttService?.Dispose();
         }
     }
